@@ -18,7 +18,7 @@ export default function Sidebar({ mobileOpen, onClose }) {
   }
 
   const content = (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full w-full min-w-0">
       <div className="flex items-center justify-between px-5 h-16 border-b border-white/10">
         <Link to="/" className="flex items-center gap-2 font-extrabold">
           <span className="w-8 h-8 rounded-lg bg-brand-500 flex items-center justify-center">
