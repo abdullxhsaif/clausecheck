@@ -72,7 +72,7 @@ export default function Sidebar({ mobileOpen, onClose }) {
 
   return (
     <>
-      <aside className="hidden md:flex w-72 shrink-0 border-r border-white/10 bg-[#0b1120] min-h-screen sticky top-0">
+      <aside className="hidden md:flex w-72 shrink-0 border-r border-white/10 bg-[#0b1120] h-screen sticky top-0 overflow-y-auto">
         {content}
       </aside>
       {mobileOpen && (
