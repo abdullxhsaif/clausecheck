@@ -1,7 +1,7 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /users/{userId} {
+    match /clausecheck_users/{userId} {
       allow read: if request.auth != null && request.auth.uid == userId;
       allow create: if request.auth != null && request.auth.uid == userId;
       // Update allowed only if plan unchanged and credits never increase (decrease-only)
@@ -10,7 +10,7 @@ service cloud.firestore {
         && request.resource.data.credits <= resource.data.credits;
       allow delete: if false;
     }
-    match /users/{userId}/analyses/{analysisId} {
+    match /clausecheck_users/{userId}/analyses/{analysisId} {
       allow read, create: if request.auth != null && request.auth.uid == userId;
       allow update, delete: if false;
     }
