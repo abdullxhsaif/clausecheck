@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.1.0] — 2026-07-23
+
+### Security
+- **Server-side credit enforcement (fixes paywall bypass).** `/api/generate` now
+  reads the caller's credit balance from Firestore (via the REST API, using the
+  user's own ID token as bearer — no service-account secret) and rejects requests
+  with `402` when credits are exhausted. Previously credits were only enforced in
+  the client, so an authenticated user could call the endpoint directly for
+  unlimited analyses. Credits are decremented server-side only after a successful
+  analysis, and the authoritative balance is returned to the client.
+
+### Added
+- **Analysis history.** Each successful analysis is persisted to the
+  `clausecheck_users/{uid}/analyses` subcollection, and the dashboard shows a
+  "Recent analyses" list (document type, flag count, overall risk, relative time).
+  This delivers the "Analysis history" capability previously advertised on Pricing.
+
+### Changed
+- `AuthContext` now exposes `syncCredits(n)` to mirror the server-authoritative
+  balance; the client no longer decrements credits locally.
+
 ## [1.0.0] — 2026-07-11
 
 Initial release.
