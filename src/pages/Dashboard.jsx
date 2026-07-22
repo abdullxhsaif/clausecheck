@@ -1,24 +1,56 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { Menu, ScanLine, Sparkles, Loader2, RotateCcw, FileWarning, Info } from 'lucide-react'
+import { Menu, ScanLine, Sparkles, Loader2, RotateCcw, FileWarning, Info, History, FileText } from 'lucide-react'
+import { collection, addDoc, query, orderBy, limit, getDocs } from 'firebase/firestore'
 import Sidebar from '../components/Sidebar.jsx'
 import AnalysisResult from '../components/AnalysisResult.jsx'
 import ResultSkeleton from '../components/ResultSkeleton.jsx'
+import RiskBadge from '../components/RiskBadge.jsx'
 import { useAuth } from '../context/AuthContext.jsx'
-import { auth } from '../lib/firebase.js'
+import { auth, db } from '../lib/firebase.js'
 
 const SAMPLE = `This Agreement renews automatically for successive 12-month terms unless Customer provides written notice of non-renewal at least 90 days prior to the end of the then-current term. Company may modify these terms at any time in its sole discretion. Customer waives any right to participate in a class action and agrees to binding arbitration. Company's total liability shall not exceed the fees paid in the prior one (1) month.`
 
+function timeAgo(ts) {
+  const s = Math.floor((Date.now() - ts) / 1000)
+  if (s < 60) return 'just now'
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ago`
+  return `${Math.floor(h / 24)}d ago`
+}
+
 export default function Dashboard() {
-  const { profile, decrementCredit } = useAuth()
+  const { profile, syncCredits } = useAuth()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [text, setText] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
+  const [history, setHistory] = useState([])
 
   const credits = profile?.credits ?? 0
   const noCredits = credits <= 0
+
+  const loadHistory = useCallback(async (uid) => {
+    try {
+      const q = query(
+        collection(db, 'clausecheck_users', uid, 'analyses'),
+        orderBy('createdAt', 'desc'),
+        limit(5)
+      )
+      const snap = await getDocs(q)
+      setHistory(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    } catch {
+      /* history is best-effort */
+    }
+  }, [])
+
+  useEffect(() => {
+    const uid = auth?.currentUser?.uid
+    if (uid) loadHistory(uid)
+  }, [loadHistory])
 
   const analyze = async () => {
     setError('')
@@ -44,7 +76,18 @@ export default function Dashboard() {
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || 'Analysis failed')
       setResult(data)
-      await decrementCredit()
+      // Mirror the server-authoritative credit balance.
+      if (typeof data.creditsLeft === 'number') syncCredits(data.creditsLeft)
+      // Persist a lightweight history record (rules allow create for own docs).
+      try {
+        await addDoc(collection(db, 'clausecheck_users', currentUser.uid, 'analyses'), {
+          documentType: data.documentType || 'Document',
+          overallRisk: data.overallRisk || 'low',
+          clauseCount: Array.isArray(data.clauses) ? data.clauses.length : 0,
+          createdAt: Date.now(),
+        })
+        loadHistory(currentUser.uid)
+      } catch { /* non-fatal */ }
     } catch (e) {
       setError(e.message || 'Something went wrong.')
     } finally {
@@ -116,6 +159,29 @@ export default function Dashboard() {
               </div>
             )}
           </div>
+
+          {history.length > 0 && (
+            <div className="mt-10">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-300 mb-3">
+                <History className="w-4 h-4 text-brand-400" /> Recent analyses
+              </h2>
+              <div className="space-y-2">
+                {history.map((h) => (
+                  <div key={h.id} className="card px-4 py-3 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <FileText className="w-4 h-4 text-gray-500 shrink-0" />
+                      <span className="text-sm text-gray-200 truncate">{h.documentType || 'Document'}</span>
+                      <span className="text-xs text-gray-500 shrink-0">· {h.clauseCount || 0} flags</span>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <RiskBadge level={h.overallRisk} />
+                      <span className="text-xs text-gray-500">{h.createdAt ? timeAgo(h.createdAt) : ''}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <p className="mt-10 text-xs text-gray-600 text-center">
             ClauseCheck provides informational analysis only and is not a substitute for legal advice.
