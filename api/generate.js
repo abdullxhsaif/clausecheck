@@ -19,6 +19,36 @@ function rateLimited(uid) {
   return arr.length > max
 }
 
+// --- Server-side credit enforcement via the Firestore REST API ---------------
+// Uses the caller's own Firebase ID token as the bearer, so no service-account
+// secret is needed and Firestore security rules still apply (read own doc;
+// decrease-only credit updates). This keeps credit limits enforced on the
+// backend — the client counter alone can be bypassed by calling this endpoint
+// directly.
+function userDocUrl(uid) {
+  return `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/clausecheck_users/${uid}`
+}
+
+async function getCredits(uid, idToken) {
+  const res = await fetch(userDocUrl(uid), {
+    headers: { Authorization: `Bearer ${idToken}` },
+  })
+  if (res.status === 404) return { missing: true }
+  if (!res.ok) return { error: true }
+  const doc = await res.json()
+  const f = doc?.fields?.credits
+  const raw = f?.integerValue ?? f?.doubleValue ?? '0'
+  return { credits: Math.floor(Number(raw)) || 0 }
+}
+
+async function setCredits(uid, idToken, credits) {
+  await fetch(`${userDocUrl(uid)}?updateMask.fieldPaths=credits`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields: { credits: { integerValue: String(credits) } } }),
+  })
+}
+
 const SYSTEM_PROMPT = `You are ClauseCheck, an expert contract and Terms-of-Service analyst.
 Analyze the agreement text the user provides and return ONLY valid JSON (no markdown fences) with this exact shape:
 {
@@ -165,6 +195,22 @@ export default async function handler(req, res) {
       res.status(400).json({ error: 'Please paste at least a paragraph of contract text.' })
       return
     }
+
+    // Enforce credits on the server before spending any inference.
+    const bal = await getCredits(uid, token)
+    if (bal.missing) {
+      res.status(403).json({ error: 'Account not found. Please reload and sign in again.' })
+      return
+    }
+    if (bal.error) {
+      res.status(502).json({ error: 'Could not verify your credit balance. Please try again.' })
+      return
+    }
+    if (bal.credits <= 0) {
+      res.status(402).json({ error: 'You’re out of credits. Upgrade to keep analyzing.' })
+      return
+    }
+
     const clipped = text.slice(0, 16000)
     const userKey = req.headers['x-user-ai-key'] || undefined
 
@@ -174,7 +220,13 @@ export default async function handler(req, res) {
       res.status(502).json({ error: 'The analyzer returned an unexpected response. Please try again.' })
       return
     }
-    res.status(200).json(parsed)
+
+    // Decrement only after a successful analysis. Rules permit decrease-only
+    // updates, so this succeeds with the user's own token.
+    const creditsLeft = Math.max(0, bal.credits - 1)
+    try { await setCredits(uid, token, creditsLeft) } catch { /* non-fatal */ }
+
+    res.status(200).json({ ...parsed, creditsLeft })
   } catch (e) {
     res.status(500).json({ error: 'Server error analyzing document.' })
   }
